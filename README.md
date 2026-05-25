@@ -20,6 +20,7 @@ Open the USB serial console. On boot, save, reset, or Ctrl-C reload, the monitor
 
 - Reads ESP3 frames from the EnOcean UART on `board.TX` / `board.RX` at `57600 8N1`.
 - Prints timestamped text lines to the USB serial console.
+- Blinks an optional status NeoPixel a colour per received telegram, keyed on the EnOcean RORG family (see [NeoPixel Status](#neopixel-status)).
 - Does not filter by sender, EEP, KNX group address, or application.
 - Does not contain HKK-specific sender labels or mappings.
 - Validates both ESP3 CRC8 bytes.
@@ -56,6 +57,39 @@ UART wiring is crossed:
 - Feather `RX` -> EnOcean module `TX`
 - Shared `GND`
 - Power according to the module/carrier board requirements
+
+A NeoPixel breakout is also wired for status indication (USB power, `GND`, `DI` -> `GPIO10`). See `WIRING.md` for the full pin map.
+
+## NeoPixel Status
+
+If a NeoPixel is wired (see `WIRING.md`) and the `neopixel` library is present in
+`/CIRCUITPY/lib/`, the monitor blinks it once for every received frame. The colour
+encodes the EnOcean telegram family, taken from the RORG byte — the first field of
+the EEP `RORG-FUNC-TYPE` profile name — so the colour tells you the device class at
+a glance without reading the serial console.
+
+| Colour | RORG | Family | Typical devices |
+|--------|------|--------|-----------------|
+| Green | `0xF6` RPS | Repeated Switch | rocker switches, window handles |
+| Amber | `0xD5` 1BS | 1-byte sensor | single binary contact (door, window) |
+| Cyan | `0xA5` 4BS | 4-byte sensor | temperature, humidity, light, occupancy |
+| Blue | `0xD2` VLD | Variable Length Data | actuators, metering, multi-channel |
+| Magenta | `0xD4` UTE | Universal Teach-in | teach-in handshakes |
+| Orange | `0xD1` MSC | Manufacturer Specific | proprietary telegrams |
+| White | `0xC5` SYS_EX | Remote management | commissioning / system exchange |
+| Red | other | unrecognised RORG | radio telegram with an unknown RORG |
+| Dim white | n/a | non-radio frame | valid `RESPONSE` / `EVENT` / other packet types |
+| Dim red | n/a | bad frame | CRC or size error |
+
+Notes:
+
+- The blink is non-blocking; the on-time is `BLINK_ON_S` (default 80 ms) and brightness
+  is `NEOPIXEL_BRIGHTNESS` (default 0.25). Both are constants at the top of `code.py`.
+- The data pin is resolved from `NEOPIXEL_PIN_CANDIDATES` and logged on startup as
+  `event=neopixel_config pin=board.<name>`.
+- If the NeoPixel cannot be set up (no library, no matching pin), the monitor logs
+  `event=neopixel_config status=disabled reason=...` and runs normally without it. The
+  onboard `board.LED` still toggles per valid frame regardless.
 
 ## Output Format
 
@@ -100,5 +134,6 @@ The monitor output follows the ESP3 packet model:
 
 - `code.py`: the monitor.
 - `README.md`: this file.
+- `WIRING.md`: hardware pin map (Feather, FAM4PI, NeoPixel).
 - `CHANGELOG.md`: release notes.
 - `LICENSE`: MIT license.

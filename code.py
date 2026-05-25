@@ -28,6 +28,11 @@ except ImportError:
     digitalio = None
 
 try:
+    import neopixel
+except ImportError:
+    neopixel = None
+
+try:
     import supervisor
 except ImportError:
     supervisor = None
@@ -43,6 +48,13 @@ UART_TIMEOUT_S = 0.02
 READ_TIMEOUT_S = 0.5
 COMMAND_TIMEOUT_S = 1.25
 MAX_FRAME_PAYLOAD = 512
+
+# NeoPixel status indicator. A single pixel on a breakout, DI wired to the
+# board pin resolved from the candidates below (see WIRING.md). The pixel
+# blinks a per-RORG colour for every received telegram.
+NEOPIXEL_PIN_CANDIDATES = ("GPIO10", "GP10", "IO10", "D10")
+NEOPIXEL_BRIGHTNESS = 0.25
+BLINK_ON_S = 0.08
 
 ESP3_SYNC = 0x55
 PT_RADIO_ERP1 = 0x01
@@ -93,6 +105,22 @@ RORG_NAMES = {
     0xD1: "MSC",
     0xC5: "SYS_EX",
 }
+
+# NeoPixel colour per RORG telegram family (the RORG field of the EEP
+# RORG-FUNC-TYPE name). RGB tuples, scaled by NEOPIXEL_BRIGHTNESS at runtime.
+RORG_COLORS = {
+    0xF6: (0, 255, 0),      # RPS    rocker / window-handle switches   -> green
+    0xD5: (255, 170, 0),    # 1BS    single binary contact             -> amber
+    0xA5: (0, 180, 255),    # 4BS    temp / humidity / light / occ.    -> cyan
+    0xD2: (0, 0, 255),      # VLD    actuators, metering, multichannel -> blue
+    0xD4: (255, 0, 255),    # UTE    universal teach-in                -> magenta
+    0xD1: (255, 80, 0),     # MSC    manufacturer specific             -> orange
+    0xC5: (255, 255, 255),  # SYS_EX remote management / sys exchange  -> white
+}
+COLOR_UNKNOWN_RORG = (255, 0, 0)   # radio telegram, unrecognised RORG -> red
+COLOR_NON_RADIO = (30, 30, 30)     # valid non-RADIO_ERP1 frame        -> dim white
+COLOR_BAD_FRAME = (120, 0, 0)      # CRC / size error                  -> dim red
+COLOR_OFF = (0, 0, 0)
 
 
 def hexs(data, sep=" "):
@@ -274,6 +302,44 @@ def make_led():
     led = digitalio.DigitalInOut(board.LED)
     led.direction = digitalio.Direction.OUTPUT
     return led
+
+
+def make_pixel():
+    """Create the status NeoPixel.
+
+    Returns (pixel, status). On success pixel is a NeoPixel and status is the
+    resolved "board.<pin>" string. On failure pixel is None and status is a
+    short reason: no_neopixel_lib, no_pin, or init_error:<pin>.
+    """
+    if neopixel is None:
+        return None, "no_neopixel_lib"
+    for name in NEOPIXEL_PIN_CANDIDATES:
+        if not hasattr(board, name):
+            continue
+        try:
+            pixel = neopixel.NeoPixel(
+                getattr(board, name),
+                1,
+                brightness=NEOPIXEL_BRIGHTNESS,
+                auto_write=True,
+            )
+        except Exception:
+            return None, "init_error:%s" % name
+        pixel.fill(COLOR_OFF)
+        return pixel, "board.%s" % name
+    return None, "no_pin"
+
+
+def telegram_color(frame):
+    """RGB colour for a received frame, keyed on the EnOcean RORG family."""
+    if "error" in frame:
+        return COLOR_BAD_FRAME
+    if frame.get("packet_type") != PT_RADIO_ERP1:
+        return COLOR_NON_RADIO
+    data = frame.get("data") or b""
+    if not data:
+        return COLOR_NON_RADIO
+    return RORG_COLORS.get(data[0], COLOR_UNKNOWN_RORG)
 
 
 def flush_uart(uart):
@@ -570,6 +636,19 @@ def main():
     print_startup()
     uart = make_uart()
     led = make_led()
+    pixel, pixel_status = make_pixel()
+    if pixel is not None:
+        print("%s event=neopixel_config pin=%s brightness=%.2f blink_s=%.3f" % (
+            stamp(),
+            pixel_status,
+            NEOPIXEL_BRIGHTNESS,
+            BLINK_ON_S,
+        ))
+    else:
+        print("%s event=neopixel_config status=disabled reason=%s" % (
+            stamp(),
+            pixel_status,
+        ))
     flush_uart(uart)
 
     version = request_common_command(uart, CO_RD_VERSION, stats)
@@ -581,12 +660,21 @@ def main():
     flush_uart(uart)
     print_ready(stats)
 
+    pixel_off_at = 0.0
     while True:
         frame = read_esp3_frame(uart, READ_TIMEOUT_S)
+        now = time.monotonic()
+        # Non-blocking blink: turn the pixel off once its on-time has elapsed.
+        if pixel is not None and pixel_off_at and now >= pixel_off_at:
+            pixel.fill(COLOR_OFF)
+            pixel_off_at = 0.0
         if frame is None:
             continue
         if led is not None and "error" not in frame:
             led.value = not led.value
+        if pixel is not None:
+            pixel.fill(telegram_color(frame))
+            pixel_off_at = now + BLINK_ON_S
         print_frame(frame, stats)
 
 
