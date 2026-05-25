@@ -1,6 +1,6 @@
 # EnOcean USB Sniffer
 
-Version: `v1.0`
+Version: `v1.1`
 
 Generic CircuitPython ESP3 / EnOcean USB serial sniffer for an Adafruit Feather STM32F405 Express attached to an ESP3-capable EnOcean module such as FAM4PI / TCM.
 

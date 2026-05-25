@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1 - 2026-05-25
 
 - Drive an optional status NeoPixel: blink a colour per received telegram,
   encoded by the EnOcean RORG family (RPS/1BS/4BS/VLD/UTE/MSC/SYS_EX, plus
